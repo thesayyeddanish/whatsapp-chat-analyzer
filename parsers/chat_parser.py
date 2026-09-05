@@ -43,11 +43,11 @@ class WhatsAppChatParser:
         
         return self.df
     
-    def _normalize_columns(self) -> pd.DataFrame:
+        def _normalize_columns(self) -> pd.DataFrame:
         """Normalize column names from different WhatsApp formats"""
         # Map common column name variations
         column_mapping = {
-            'sender': ['sender', 'from', 'user', 'name', 'author'],
+            'sender': ['sender', 'from', 'user', 'name', 'author', 'username'],  # Added 'username'
             'message': ['message', 'text', 'msg', 'content'],
             'date': ['date', 'datetime', 'timestamp', 'time']
         }
