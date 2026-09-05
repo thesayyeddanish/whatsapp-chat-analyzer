@@ -26,7 +26,7 @@ class GeminiChatAnalyzer:
         # Initialize Gemini API
         genai.configure(api_key=api_key)
         
-        # Dynamic Model Selection (resolves 404 model errors automatically)
+        # Dynamic Model Selection (resolves model deprecation & 404 errors)
         selected_model = self._get_best_available_model()
         self.model = genai.GenerativeModel(selected_model)
         
@@ -34,31 +34,39 @@ class GeminiChatAnalyzer:
         self.chat_context = self._create_chat_context()
 
     def _get_best_available_model(self) -> str:
-        """Dynamically find an available model supporting generateContent"""
+        """Dynamically inspect API key permissions and find an active model"""
         preferred_models = [
-            'models/gemini-2.5-flash',
-            'models/gemini-1.5-flash',
-            'models/gemini-2.0-flash',
-            'models/gemini-pro'
+            'gemini-3.6-flash',
+            'gemini-3.7-flash',
+            'gemini-1.5-flash',
+            'gemini-2.0-flash',
+            'gemini-pro'
         ]
         
         try:
-            available_models = [
-                m.name for m in genai.list_models() 
-                if 'generateContent' in m.supported_generation_methods
-            ]
+            # Query models available for the provided key that support generateContent
+            available_models = []
+            for m in genai.list_models():
+                if 'generateContent' in m.supported_generation_methods:
+                    # Clean up prefix 'models/' if present in m.name
+                    clean_name = m.name.replace('models/', '')
+                    available_models.append(clean_name)
+                    available_models.append(m.name)
             
+            # Match in priority order
             for model in preferred_models:
-                if model in available_models:
+                if model in available_models or f"models/{model}" in available_models:
                     return model
             
+            # Fallback to the first available model if preferred list doesn't match
             if available_models:
-                return available_models[0]
+                return available_models[0].replace('models/', '')
                 
         except Exception:
             pass
 
-        return 'gemini-1.5-flash'
+        # Default fallback
+        return 'gemini-3.6-flash'
     
     def _create_chat_context(self) -> str:
         """Create a summary of the chat for context"""
