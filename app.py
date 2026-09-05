@@ -4,6 +4,7 @@ import tempfile
 import os
 from pathlib import Path
 import plotly.express as px
+import re
 
 # Import your modules
 from parsers.chat_parser import WhatsAppChatParser
@@ -11,7 +12,7 @@ from analyzers.activity_analyzer import ActivityAnalyzer
 from analyzers.participant_analyzer import ParticipantAnalyzer
 from sentiment.sentiment_analyzer import SentimentAnalyzer
 from visualizers.dashboard import ChatVisualizer
-from utils.chatbot import ChatAnalyzerBot
+from utils.gemini_bot import GeminiChatAnalyzer
 
 st.set_page_config(
     page_title="WhatsApp Chat Analyzer",
@@ -51,7 +52,7 @@ st.markdown("""
     }
     .bot-message {
         background: #f5f5f5;
-        border-left: 4px solid #4caf50;
+        border-left: 4px solid #673ab7;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -81,15 +82,12 @@ if uploaded_file is not None:
         
         st.success(f"✅ Loaded **{metadata['total_messages']:,}** messages from **{len(metadata['participants'])}** participants")
         
-        # Initialize chatbot
-        chatbot = ChatAnalyzerBot(df, metadata)
-        
         # Sidebar navigation
         st.sidebar.title("🧭 Navigation")
         section = st.sidebar.radio(
             "Select Section",
             ["📊 Overview", "⏰ Activity & Timing", "👥 Participants", 
-             "😊 Sentiment", "🏷️ Topics", "📖 Story", "📥 Export", "🤖 Chatbot"],
+             "😊 Sentiment", "🏷️ Topics", "📖 Story", "📥 Export", "🤖 AI Chatbot"],
             index=0
         )
         
@@ -374,192 +372,239 @@ if uploaded_file is not None:
             - 🏷️ **Topics** - What do you talk about most?
             - 📖 **Story** - Visual timeline of your conversation
             - 📥 **Export** - Download beautiful infographics to share!
-            - 🤖 **Chatbot** - Ask questions about your chat!
+            - 🤖 **AI Chatbot** - Ask Google AI anything about your chat!
             
             **Happy exploring! 🎉**
             """)
         
-        # ========== CHATBOT ==========
-        elif section == "🤖 Chatbot":
-            st.header("🤖 Chat Analyzer Bot")
+        # ========== AI CHATBOT (GEMINI) ==========
+        elif section == "🤖 AI Chatbot":
+            st.header("🤖 AI-Powered Chat Analyzer")
             
-            st.markdown("""
-            ### 💬 Ask Me Anything About Your Chat!
+            # Check for API key
+            if "gemini_api_key" not in st.session_state:
+                st.session_state.gemini_api_key = ""
             
-            I'm your personal chat assistant. Ask questions or search for specific words!
-            """)
-            
-            # Initialize chat history in session state
-            if "chat_history" not in st.session_state:
-                st.session_state.chat_history = []
-            if "search_results" not in st.session_state:
-                st.session_state.search_results = None
-            
-            # Display chat history
-            for message in st.session_state.chat_history:
-                if message["role"] == "user":
-                    st.markdown(f"""
-                    <div class="chat-message user-message">
-                        <div style="font-weight: bold; color: #1976d2; margin-bottom: 5px;">👤 You</div>
-                        <div>{message["content"]}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    st.markdown(f"""
-                    <div class="chat-message bot-message">
-                        <div style="font-weight: bold; color: #388e3c; margin-bottom: 5px;">🤖 Bot</div>
-                        <div>{message["content"]}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-            
-            # Display search results if any
-            if st.session_state.search_results is not None and len(st.session_state.search_results) > 0:
-                st.markdown("---")
-                st.subheader("🔍 Search Results")
+            # API Key input in sidebar
+            with st.sidebar.expander("🔑 Gemini API Key Setup"):
+                st.markdown("""
+                ### Get Your Free API Key
                 
-                # Show results as chat messages
-                for idx, row in st.session_state.search_results.iterrows():
-                    st.markdown(f"""
-                    <div style="background: white; padding: 15px; border-radius: 10px; 
-                                margin: 10px 0; border-left: 4px solid #ff9800;
-                                box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
-                        <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
-                            <div style="font-weight: bold; color: #333;">👤 {row['sender']}</div>
-                            <div style="color: #999; font-size: 12px;">📅 {row['date']}</div>
-                        </div>
-                        <div style="color: #555; line-height: 1.6;">
-                        {row['message'][:500]}{'...' if len(str(row['message'])) > 500 else ''}
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                1. Go to: https://aistudio.google.com/apikey
+                2. Click "Create API Key"
+                3. Copy and paste it below
                 
-                # Clear button
-                if st.button("🗑️ Clear Search Results"):
-                    st.session_state.search_results = None
-                    st.rerun()
-            
-            # Chat input - use form to prevent rerun loop
-            st.markdown("---")
-            
-            with st.form("chat_form", clear_on_submit=True):
-                user_input = st.text_input(
-                    "Type your question or search term:",
-                    placeholder="e.g., 'Search for good morning' or 'Who talks more?'",
-                    key="chat_input_form"
+                **It's completely FREE!** 60 requests/minute on free tier.
+                """)
+                
+                api_key_input = st.text_input(
+                    "Enter your Gemini API Key:",
+                    type="password",
+                    value=st.session_state.gemini_api_key,
+                    key="api_key_input_box"
                 )
                 
-                submitted = st.form_submit_button("Send", type="primary", use_container_width=True)
-            
-            if submitted and user_input:
-                # Add user message to history
-                st.session_state.chat_history.append({"role": "user", "content": user_input})
-                
-                # Get bot response
-                answer, results = chatbot.answer_question(user_input)
-                
-                # Add bot response to history
-                st.session_state.chat_history.append({"role": "assistant", "content": answer})
-                
-                # Store search results if any
-                if results is not None and len(results) > 0:
-                    st.session_state.search_results = results
+                if api_key_input:
+                    st.session_state.gemini_api_key = api_key_input
+                    st.success("✅ API Key saved!")
                 else:
-                    st.session_state.search_results = None
+                    st.warning("⚠️ API key required for AI features")
+            
+            if not st.session_state.gemini_api_key:
+                st.warning("""
+                ### 🔑 API Key Required
                 
-                # Rerun to show new message
-                st.rerun()
-            
-            # Quick question buttons
-            st.markdown("---")
-            st.markdown("#### ⚡ Quick Questions:")
-            
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                if st.button("📊 Who talks more?", key="q1", use_container_width=True):
-                    st.session_state.chat_history.append({"role": "user", "content": "Who talks more?"})
-                    answer, results = chatbot.answer_question("Who talks more?")
-                    st.session_state.chat_history.append({"role": "assistant", "content": answer})
-                    st.session_state.search_results = None
-                    st.rerun()
-            
-            with col2:
-                if st.button("🕐 Peak hour?", key="q2", use_container_width=True):
-                    st.session_state.chat_history.append({"role": "user", "content": "What's our peak hour?"})
-                    answer, results = chatbot.answer_question("What's our peak hour?")
-                    st.session_state.chat_history.append({"role": "assistant", "content": answer})
-                    st.session_state.search_results = None
-                    st.rerun()
-            
-            with col3:
-                if st.button("😊 Positive?", key="q3", use_container_width=True):
-                    st.session_state.chat_history.append({"role": "user", "content": "Show positive messages"})
-                    answer, results = chatbot.answer_question("Show positive messages")
-                    st.session_state.chat_history.append({"role": "assistant", "content": answer})
-                    st.session_state.search_results = None
-                    st.rerun()
-            
-            with col4:
-                if st.button("🔍 Search 'love'", key="q4", use_container_width=True):
-                    st.session_state.chat_history.append({"role": "user", "content": "Search for love"})
-                    answer, results = chatbot.answer_question("Search for love")
-                    st.session_state.chat_history.append({"role": "assistant", "content": answer})
-                    st.session_state.search_results = results if results is not None and len(results) > 0 else None
-                    st.rerun()
-            
-            # Clear chat button
-            st.markdown("---")
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("🗑️ Clear Chat History", use_container_width=True):
-                    st.session_state.chat_history = []
-                    st.session_state.search_results = None
-                    st.rerun()
-            
-            with col2:
-                if st.button("❓ Show Help", use_container_width=True):
-                    st.session_state.chat_history.append({"role": "user", "content": "help"})
-                    answer, results = chatbot.answer_question("help")
-                    st.session_state.chat_history.append({"role": "assistant", "content": answer})
-                    st.session_state.search_results = None
-                    st.rerun()
-            
-            # Help section
-            with st.expander("❓ What can I ask?"):
-                st.markdown("""
-                **🔍 Search Messages:**
-                - Search for 'good morning'
-                - Find messages with 'love'
-                - Show message containing 'meeting'
-                - Where did we talk about 'trip'?
+                To use the AI-powered chatbot, you need a Google Gemini API key.
                 
-                **📊 General Stats:**
-                - How many total messages?
-                - What's our average per day?
-                - Who talks more?
-                - When's our peak hour?
+                **It's FREE!** Get yours here: https://aistudio.google.com/apikey
                 
-                **😊 Sentiment:**
-                - Show me positive messages
-                - How many negative messages?
-                
-                **🔑 Words & Emojis:**
-                - What words does [name] use most?
-                - What are our top words?
-                - How many emojis do we use?
-                
-                **📱 Messages:**
-                - What was the first message?
-                - What's the longest message?
-                - Show me the last message
-                
-                **🚀 Behavior:**
-                - Who starts conversations more?
-                - What's our response time?
-                - Who shares more links?
-                
-                Just type naturally and I'll do my best to answer! 😊
+                Then enter it in the sidebar above.
                 """)
+                
+                # Show basic stats while waiting
+                st.info("While you're getting your API key, here are some quick stats:")
+                st.write(f"- 💬 Total messages: **{metadata['total_messages']:,}**")
+                st.write(f"- 👥 Participants: **{', '.join(metadata['participants'])}**")
+                st.write(f"- 📅 Date range: **{metadata['date_range']['start']}** to **{metadata['date_range']['end']}**")
+            else:
+                # Initialize Gemini bot
+                try:
+                    gemini_bot = GeminiChatAnalyzer(df, metadata, st.session_state.gemini_api_key)
+                    
+                    # Welcome message
+                    st.markdown("""
+                    ### 🧠 Ask Anything About Your Chat!
+                    
+                    I'm powered by **Google's Gemini AI**. I can:
+                    - 🔍 **Search** for specific topics or words
+                    - 📊 **Analyze** patterns and trends
+                    - 💡 **Provide insights** about your relationship
+                    - 📖 **Summarize** time periods
+                    - 🎯 **Compare** communication styles
+                    
+                    Just ask naturally!
+                    """)
+                    
+                    # Initialize chat history
+                    if "gemini_chat_history" not in st.session_state:
+                        st.session_state.gemini_chat_history = []
+                    if "gemini_search_results" not in st.session_state:
+                        st.session_state.gemini_search_results = None
+                    
+                    # Display chat history
+                    for message in st.session_state.gemini_chat_history:
+                        if message["role"] == "user":
+                            st.markdown(f"""
+                            <div class="chat-message user-message">
+                                <div style="font-weight: bold; color: #1976d2; margin-bottom: 5px;">👤 You</div>
+                                <div>{message["content"]}</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        else:
+                            st.markdown(f"""
+                            <div class="chat-message bot-message">
+                                <div style="font-weight: bold; color: #673ab7; margin-bottom: 5px;">🤖 AI Assistant</div>
+                                <div style="line-height: 1.6;">{message["content"]}</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                    
+                    # Display search results
+                    if st.session_state.gemini_search_results is not None and len(st.session_state.gemini_search_results) > 0:
+                        st.markdown("---")
+                        st.subheader("🔍 Matching Messages")
+                        
+                        for idx, row in st.session_state.gemini_search_results.iterrows():
+                            st.markdown(f"""
+                            <div style="background: white; padding: 15px; border-radius: 10px; 
+                                        margin: 10px 0; border-left: 4px solid #673ab7;
+                                        box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                                    <div style="font-weight: bold; color: #333;">👤 {row['sender']}</div>
+                                    <div style="color: #999; font-size: 12px;">📅 {row['date']}</div>
+                                </div>
+                                <div style="color: #555; line-height: 1.6;">
+                                {row['message'][:500]}{'...' if len(str(row['message'])) > 500 else ''}
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        
+                        # Clear button
+                        if st.button("🗑️ Clear Search Results"):
+                            st.session_state.gemini_search_results = None
+                            st.rerun()
+                    
+                    # Chat input with form
+                    st.markdown("---")
+                    
+                    with st.form("gemini_chat_form", clear_on_submit=True):
+                        user_input = st.text_area(
+                            "Ask me anything:",
+                            placeholder="e.g., 'What are the main topics we talk about?' or 'Search for messages about trip' or 'Compare our communication styles'",
+                            height=100,
+                            key="gemini_input_area"
+                        )
+                        
+                        submitted = st.form_submit_button("🚀 Ask AI", type="primary", use_container_width=True)
+                    
+                    if submitted and user_input:
+                        # Add user message
+                        st.session_state.gemini_chat_history.append({"role": "user", "content": user_input})
+                        
+                        # Process with Gemini
+                        with st.spinner("🤔 AI is thinking..."):
+                            # Check if it's a search query
+                            if any(word in user_input.lower() for word in ['search', 'find', 'show message', 'containing']):
+                                # Extract search term
+                                search_match = re.search(r"(?:search|find|containing|with)\s+(?:for\s+)?['\"]?([^'\"]+)['\"]?", user_input, re.IGNORECASE)
+                                if search_match:
+                                    search_term = search_match.group(1)
+                                    answer, results = gemini_bot.search_messages(search_term)
+                                    st.session_state.gemini_search_results = results if len(results) > 0 else None
+                                else:
+                                    answer = gemini_bot.analyze_chat(user_input)
+                                    st.session_state.gemini_search_results = None
+                            else:
+                                answer = gemini_bot.analyze_chat(user_input)
+                                st.session_state.gemini_search_results = None
+                        
+                        # Add AI response
+                        st.session_state.gemini_chat_history.append({"role": "assistant", "content": answer})
+                        st.rerun()
+                    
+                    # Quick action buttons
+                    st.markdown("---")
+                    st.markdown("#### ⚡ Quick Actions:")
+                    
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        if st.button("📊 Get Chat Insights", use_container_width=True):
+                            st.session_state.gemini_chat_history.append({"role": "user", "content": "Give me deep insights about this chat"})
+                            with st.spinner("🤔 AI is analyzing..."):
+                                answer = gemini_bot.get_insights()
+                            st.session_state.gemini_chat_history.append({"role": "assistant", "content": answer})
+                            st.rerun()
+                    
+                    with col2:
+                        if st.button("👥 Compare Styles", use_container_width=True):
+                            st.session_state.gemini_chat_history.append({"role": "user", "content": "Compare our communication styles"})
+                            with st.spinner("🤔 AI is comparing..."):
+                                answer = gemini_bot.compare_participants()
+                            st.session_state.gemini_chat_history.append({"role": "assistant", "content": answer})
+                            st.rerun()
+                    
+                    with col3:
+                        if st.button("🔍 Search 'love'", use_container_width=True):
+                            st.session_state.gemini_chat_history.append({"role": "user", "content": "Search for love"})
+                            with st.spinner("🤔 AI is searching..."):
+                                answer, results = gemini_bot.search_messages("love")
+                            st.session_state.gemini_chat_history.append({"role": "assistant", "content": answer})
+                            st.session_state.gemini_search_results = results if len(results) > 0 else None
+                            st.rerun()
+                    
+                    # Clear buttons
+                    st.markdown("---")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("🗑️ Clear Chat", use_container_width=True):
+                            st.session_state.gemini_chat_history = []
+                            st.session_state.gemini_search_results = None
+                            st.rerun()
+                    
+                    with col2:
+                        if st.button("❓ Help", use_container_width=True):
+                            st.session_state.gemini_chat_history.append({"role": "user", "content": "What can you do?"})
+                            answer = """
+                            🤖 **I'm your AI chat analyst! Try asking:**
+                            
+                            **📊 Analysis:**
+                            - "What are the main topics we talk about?"
+                            - "Give me insights about our chat"
+                            - "Compare our communication styles"
+                            - "What's the overall mood of our chat?"
+                            
+                            **🔍 Search:**
+                            - "Search for messages about 'trip'"
+                            - "Find messages containing 'good morning'"
+                            - "Show me messages with 'love'"
+                            
+                            **📈 Patterns:**
+                            - "Who talks more and why?"
+                            - "What time do we chat most?"
+                            - "Are we more positive or negative?"
+                            
+                            **📖 Summaries:**
+                            - "Summarize our relationship"
+                            - "What's interesting about this chat?"
+                            
+                            Just ask naturally and I'll analyze your chat! 😊
+                            """
+                            st.session_state.gemini_chat_history.append({"role": "assistant", "content": answer})
+                            st.rerun()
+                    
+                except Exception as e:
+                    st.error(f"Error initializing AI: {str(e)}")
+                    st.info("Make sure your API key is valid. Get one at: https://aistudio.google.com/apikey")
         
         # ========== ACTIVITY & TIMING ==========
         elif section == "⏰ Activity & Timing":
@@ -845,7 +890,6 @@ if uploaded_file is not None:
                 double_text = participant_analyzer.calculate_double_texting_index()
                 
                 if len(double_text) > 0:
-                    # Explanation
                     st.markdown("""
                     <div style="background: #e3f2fd; padding: 15px; border-radius: 10px; margin: 15px 0;">
                         <div style="font-size: 16px; color: #1976d2;">
@@ -922,7 +966,7 @@ if uploaded_file is not None:
                 selected_user = st.selectbox(
                     "Select participant", 
                     list(vocab_stats.keys()),
-                    key="wordcloud_user"
+                    key="wordcloud_user_select"
                 )
                 
                 if selected_user:
@@ -1301,7 +1345,7 @@ else:
     - **Sentiment Analysis** - VADER scoring, mood tracking
     - **Word Clouds** - Most used words and emojis
     - **Export Options** - CSV, JSON, PNG infographics
-    - **🤖 Chatbot** - Ask questions about your chat!
+    - **🤖 AI Chatbot** - Powered by Google Gemini!
     
     ### 💡 Tips
     
