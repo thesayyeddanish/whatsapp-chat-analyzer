@@ -25,10 +25,40 @@ class GeminiChatAnalyzer:
 
         # Initialize Gemini API
         genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        # Dynamic Model Selection (resolves 404 model errors automatically)
+        selected_model = self._get_best_available_model()
+        self.model = genai.GenerativeModel(selected_model)
         
         # Create context about the chat
         self.chat_context = self._create_chat_context()
+
+    def _get_best_available_model(self) -> str:
+        """Dynamically find an available model supporting generateContent"""
+        preferred_models = [
+            'models/gemini-2.5-flash',
+            'models/gemini-1.5-flash',
+            'models/gemini-2.0-flash',
+            'models/gemini-pro'
+        ]
+        
+        try:
+            available_models = [
+                m.name for m in genai.list_models() 
+                if 'generateContent' in m.supported_generation_methods
+            ]
+            
+            for model in preferred_models:
+                if model in available_models:
+                    return model
+            
+            if available_models:
+                return available_models[0]
+                
+        except Exception:
+            pass
+
+        return 'gemini-1.5-flash'
     
     def _create_chat_context(self) -> str:
         """Create a summary of the chat for context"""
@@ -41,7 +71,6 @@ This is a WhatsApp chat analysis with the following stats:
 
 Sample messages from the chat:
 """
-        # Safely extract sample messages (handling small datasets without duplicate rows)
         if len(self.df) <= 20:
             samples = self.df
         else:
@@ -57,7 +86,6 @@ Sample messages from the chat:
     
     def analyze_chat(self, question: str) -> str:
         """Ask Gemini to analyze the chat"""
-        # Calculate active span in days safely
         try:
             start_dt = pd.to_datetime(self.metadata['date_range']['start'])
             end_dt = pd.to_datetime(self.metadata['date_range']['end'])
@@ -137,7 +165,6 @@ Make it conversational and friendly with emojis!"""
         except Exception:
             days_active = 1
 
-        # Safe sampling
         sample_size = min(30, len(self.df))
         sampled_df = self.df.sample(sample_size) if sample_size > 0 else self.df
 
