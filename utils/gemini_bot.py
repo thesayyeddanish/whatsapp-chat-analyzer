@@ -28,11 +28,12 @@ class GeminiChatAnalyzer:
         genai.configure(api_key=api_key)
 
     def _generate_response(self, prompt: str) -> str:
-        """Safe generation wrapper using active, supported Gemini endpoints"""
+        """Safe generation wrapper prioritizing gemini-3.6-flash"""
         models_to_try = [
-            'gemini-1.5-flash',
-            'gemini-1.5-pro',
-            'gemini-2.0-flash'
+            'gemini-3.6-flash',
+            'gemini-3.5-flash',
+            'gemini-3-flash',
+            'gemini-1.5-flash'
         ]
         
         last_error = None
