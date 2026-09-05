@@ -146,57 +146,88 @@ if uploaded_file is not None:
             # Media ratios
             st.subheader("📸 Media Usage by Participant")
             media_ratios = participant_analyzer.get_media_ratios()
-            st.dataframe(media_ratios, use_container_width=True)
+            if len(media_ratios) > 0:
+                st.dataframe(media_ratios, use_container_width=True)
+            else:
+                st.info("No media type data available")
             
             # Word clouds
             st.subheader("☁️ Word Clouds")
-            vocab_stats = participant_analyzer.get_vocabulary_stats()
-            
-            selected_user = st.selectbox("Select participant", list(vocab_stats.keys()))
-            if selected_user:
-                text = ' '.join(df[df['sender'] == selected_user]['message'].fillna('').tolist())
-                word_cloud_fig = ChatVisualizer(df).create_word_cloud(text, f"Word Cloud: {selected_user}")
-                st.plotly_chart(word_cloud_fig, use_container_width=True)
+            try:
+                vocab_stats = participant_analyzer.get_vocabulary_stats()
+                
+                selected_user = st.selectbox("Select participant", list(vocab_stats.keys()))
+                if selected_user:
+                    text = ' '.join(df[df['sender'] == selected_user]['message'].fillna('').tolist())
+                    word_cloud_fig = ChatVisualizer(df).create_word_cloud(text, f"Word Cloud: {selected_user}")
+                    st.plotly_chart(word_cloud_fig, use_container_width=True)
+            except Exception as e:
+                st.warning(f"Could not generate word cloud: {str(e)}")
         
         # ========== SENTIMENT ==========
         elif section == "😊 Sentiment":
             st.header("😊 Sentiment Analysis")
             
             with st.spinner("Running sentiment analysis..."):
-                sentiment_analyzer = SentimentAnalyzer(df, use_transformer=False)
-                df = sentiment_analyzer.analyze_vader()
+                try:
+                    sentiment_analyzer = SentimentAnalyzer(df, use_transformer=False)
+                    df = sentiment_analyzer.analyze_vader()
+                    st.success("✅ Sentiment analysis complete!")
+                except Exception as e:
+                    st.error(f"Sentiment analysis failed: {str(e)}")
+                    # Create default columns
+                    df['positive'] = 0.0
+                    df['neutral'] = 1.0
+                    df['negative'] = 0.0
+                    df['compound'] = 0.0
+                    df['vader_sentiment'] = 'neutral'
             
             # Sentiment distribution
             st.subheader("📊 Sentiment Distribution")
             col1, col2 = st.columns(2)
             with col1:
                 st.write("**VADER Sentiment**")
-                sentiment_counts = df['vader_sentiment'].value_counts()
-                st.write(sentiment_counts)
-                st.bar_chart(sentiment_counts)
+                if 'vader_sentiment' in df.columns:
+                    sentiment_counts = df['vader_sentiment'].value_counts()
+                    st.write(sentiment_counts)
+                    st.bar_chart(sentiment_counts)
+                else:
+                    st.write("No sentiment data available")
             
             with col2:
                 st.write("**Average Sentiment Scores**")
-                avg_scores = {
-                    'Positive': df['positive'].mean(),
-                    'Neutral': df['neutral'].mean(),
-                    'Negative': df['negative'].mean(),
-                    'Compound': df['compound'].mean()
-                }
-                st.write(avg_scores)
+                if all(col in df.columns for col in ['positive', 'neutral', 'negative', 'compound']):
+                    avg_scores = {
+                        'Positive': df['positive'].mean(),
+                        'Neutral': df['neutral'].mean(),
+                        'Negative': df['negative'].mean(),
+                        'Compound': df['compound'].mean()
+                    }
+                    st.write(avg_scores)
+                else:
+                    st.write("No sentiment data available")
             
             # Sentiment timeline
             st.subheader("📈 Sentiment Over Time")
             try:
-                sentiment_fig = ChatVisualizer(df).create_sentiment_timeline()
-                st.plotly_chart(sentiment_fig, use_container_width=True)
+                if 'compound' in df.columns:
+                    sentiment_fig = ChatVisualizer(df).create_sentiment_timeline()
+                    st.plotly_chart(sentiment_fig, use_container_width=True)
+                else:
+                    st.warning("Sentiment data not available")
             except Exception as e:
                 st.warning(f"Could not generate timeline: {str(e)}")
             
             # Mood index
             st.subheader("📅 Weekly Mood Index")
-            mood_index = sentiment_analyzer.get_mood_index('W')
-            st.dataframe(mood_index, use_container_width=True)
+            try:
+                if all(col in df.columns for col in ['compound', 'positive', 'negative', 'neutral']):
+                    mood_index = sentiment_analyzer.get_mood_index('W')
+                    st.dataframe(mood_index, use_container_width=True)
+                else:
+                    st.warning("Sentiment data not available for mood index")
+            except Exception as e:
+                st.warning(f"Could not generate mood index: {str(e)}")
         
         # ========== TOPICS ==========
         elif section == "🏷️ Topics":
@@ -206,12 +237,15 @@ if uploaded_file is not None:
             
             # Simple keyword extraction
             st.subheader("🔑 Top Keywords")
-            vocab_stats = ParticipantAnalyzer(df).get_vocabulary_stats()
-            
-            for sender, stats in vocab_stats.items():
-                st.write(f"**{sender}**")
-                top_words = [word for word, count in stats['top_words'][:10]]
-                st.write(", ".join(top_words))
+            try:
+                vocab_stats = ParticipantAnalyzer(df).get_vocabulary_stats()
+                
+                for sender, stats in vocab_stats.items():
+                    st.write(f"**{sender}**")
+                    top_words = [word for word, count in stats['top_words'][:10]]
+                    st.write(", ".join(top_words))
+            except Exception as e:
+                st.warning(f"Could not extract keywords: {str(e)}")
         
         # ========== STORY ==========
         elif section == "📖 Story":
@@ -221,8 +255,11 @@ if uploaded_file is not None:
             
             # Message timeline
             st.subheader("📅 Message Timeline")
-            timeline_fig = ChatVisualizer(df).create_message_timeline()
-            st.plotly_chart(timeline_fig, use_container_width=True)
+            try:
+                timeline_fig = ChatVisualizer(df).create_message_timeline()
+                st.plotly_chart(timeline_fig, use_container_width=True)
+            except Exception as e:
+                st.warning(f"Could not generate timeline: {str(e)}")
         
         # ========== EXPORT ==========
         elif section == "📥 Export":
@@ -234,16 +271,16 @@ if uploaded_file is not None:
             st.subheader("🎨 Infographic Card")
             if st.button("Generate Infographic"):
                 with st.spinner("Creating infographic..."):
-                    stats = {
-                        'total_messages': metadata['total_messages'],
-                        'total_words': metadata['total_words'],
-                        'participants': metadata['participants'],
-                        'date_range': metadata['date_range'],
-                        'message_count': df.groupby('sender').size().to_dict(),
-                        'media_breakdown': metadata.get('media_breakdown', {})
-                    }
-                    
                     try:
+                        stats = {
+                            'total_messages': metadata['total_messages'],
+                            'total_words': metadata['total_words'],
+                            'participants': metadata['participants'],
+                            'date_range': metadata['date_range'],
+                            'message_count': df.groupby('sender').size().to_dict(),
+                            'media_breakdown': metadata.get('media_breakdown', {})
+                        }
+                        
                         img_path = visualizer.create_infographic_card(stats)
                         st.image(img_path, caption="Chat Statistics Infographic")
                         
@@ -282,17 +319,36 @@ if uploaded_file is not None:
             
             # Participant comparison chart
             st.subheader("📊 Participant Comparison")
-            leaderboard = ParticipantAnalyzer(df).get_sender_leaderboard()
-            comparison_fig = ChatVisualizer(df).create_participant_comparison(leaderboard)
-            st.plotly_chart(comparison_fig, use_container_width=True)
+            try:
+                leaderboard = ParticipantAnalyzer(df).get_sender_leaderboard()
+                comparison_fig = ChatVisualizer(df).create_participant_comparison(leaderboard)
+                st.plotly_chart(comparison_fig, use_container_width=True)
+            except Exception as e:
+                st.warning(f"Could not generate comparison chart: {str(e)}")
         
     except Exception as e:
         st.error(f"❌ Error processing file: {str(e)}")
         st.error("""
-        **Troubleshooting:**
-        - Make sure you exported the chat correctly from WhatsApp
-        - Go to: Chat info → Export Chat → **Without Media**
-        - The file should be a `.txt` file
+        **How to Export WhatsApp Chat Correctly:**
+        
+        **On Android:**
+        1. Open the chat
+        2. Tap the three dots (⋮) → More → Export chat
+        3. Choose **WITHOUT MEDIA**
+        4. Save the .txt file
+        
+        **On iPhone:**
+        1. Open the chat
+        2. Tap the contact/group name at top
+        3. Scroll down → Export Chat
+        4. Choose **Without Media**
+        5. Save to Files
+        
+        **File should look like:**
+        ```
+        12/31/23, 11:59 PM - John Doe: Hey!
+        1/1/24, 12:00 AM - Jane Smith: Happy New Year!
+        ```
         """)
     
     finally:
@@ -310,7 +366,7 @@ else:
     2. Tap on contact/group name at top
     3. Scroll down and tap **Export Chat**
     4. Choose **Without Media** (recommended for faster analysis)
-    5. Save the `.txt` file and upload it here
+    5. Upload the `.txt` file to the app
     
     ### 🚀 Features
     
