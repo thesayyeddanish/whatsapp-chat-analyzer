@@ -10,7 +10,7 @@ class GeminiChatAnalyzer:
         self.metadata = metadata
         self.api_key = api_key
         
-        # Ensure requisite datetime helper columns exist
+        # Safe column initialization
         if 'date' in self.df.columns and not pd.api.types.is_datetime64_any_dtype(self.df['date']):
             self.df['date'] = pd.to_datetime(self.df['date'], errors='coerce')
             
@@ -23,51 +23,31 @@ class GeminiChatAnalyzer:
         if 'message_length' not in self.df.columns and 'message' in self.df.columns:
             self.df['message_length'] = self.df['message'].astype(str).str.len()
 
-        # Initialize Gemini API
+        # Configure API without running heavy blocking network calls in __init__
         genai.configure(api_key=api_key)
-        
-        # Dynamic Model Selection (resolves model deprecation & 404 errors)
-        selected_model = self._get_best_available_model()
-        self.model = genai.GenerativeModel(selected_model)
-        
-        # Create context about the chat
         self.chat_context = self._create_chat_context()
 
-    def _get_best_available_model(self) -> str:
-        """Dynamically inspect API key permissions and find an active model"""
-        preferred_models = [
+    def _generate_response(self, prompt: str) -> str:
+        """Safe generation wrapper trying 3.6-flash first, then fallbacks"""
+        models_to_try = [
             'gemini-3.6-flash',
-            'gemini-3.7-flash',
             'gemini-1.5-flash',
-            'gemini-2.0-flash',
             'gemini-pro'
         ]
         
-        try:
-            # Query models available for the provided key that support generateContent
-            available_models = []
-            for m in genai.list_models():
-                if 'generateContent' in m.supported_generation_methods:
-                    # Clean up prefix 'models/' if present in m.name
-                    clean_name = m.name.replace('models/', '')
-                    available_models.append(clean_name)
-                    available_models.append(m.name)
-            
-            # Match in priority order
-            for model in preferred_models:
-                if model in available_models or f"models/{model}" in available_models:
-                    return model
-            
-            # Fallback to the first available model if preferred list doesn't match
-            if available_models:
-                return available_models[0].replace('models/', '')
+        last_error = None
+        for model_name in models_to_try:
+            try:
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content(prompt)
+                if response.text:
+                    return response.text
+            except Exception as e:
+                last_error = e
+                continue
                 
-        except Exception:
-            pass
+        return f"Sorry, I encountered an error across available models: {str(last_error)}"
 
-        # Default fallback
-        return 'gemini-3.6-flash'
-    
     def _create_chat_context(self) -> str:
         """Create a summary of the chat for context"""
         context = f"""
@@ -121,15 +101,10 @@ Provide a detailed, friendly, and insightful answer. Use emojis to make it engag
 
 Answer:"""
         
-        try:
-            response = self.model.generate_content(prompt)
-            return response.text
-        except Exception as e:
-            return f"Sorry, I encountered an error: {str(e)}"
+        return self._generate_response(prompt)
     
     def search_messages(self, query: str) -> Tuple[str, pd.DataFrame]:
         """Search for messages and get AI analysis"""
-        
         mask = self.df['message'].astype(str).str.lower().str.contains(query.lower(), case=False, regex=False, na=False)
         results = self.df[mask].copy()
         
@@ -156,13 +131,9 @@ Based on these search results, provide:
 
 Make it conversational and friendly with emojis!"""
         
-        try:
-            response = self.model.generate_content(prompt)
-            analysis = response.text
-            full_response = f"🔍 **Found {len(results):,} messages** containing '{query}'\n\n{analysis}"
-            return full_response, results.head(10)
-        except Exception as e:
-            return f"Found {len(results)} messages, but couldn't analyze them: {str(e)}", results.head(10)
+        analysis = self._generate_response(prompt)
+        full_response = f"🔍 **Found {len(results):,} messages** containing '{query}'\n\n{analysis}"
+        return full_response, results.head(10)
     
     def get_insights(self) -> str:
         """Get AI-generated insights about the chat"""
@@ -205,15 +176,10 @@ Provide a comprehensive analysis including:
 
 Make it engaging, insightful, and friendly with emojis. Write it like you're telling a story about their friendship/relationship."""
         
-        try:
-            response = self.model.generate_content(prompt)
-            return response.text
-        except Exception as e:
-            return f"Couldn't generate insights: {str(e)}"
+        return self._generate_response(prompt)
     
     def summarize_week(self, week_start: str, week_end: str) -> str:
         """Summarize a specific week of the chat"""
-        
         week_mask = (self.df['date'] >= week_start) & (self.df['date'] <= week_end)
         week_messages = self.df[week_mask]
         
@@ -244,22 +210,16 @@ Provide a weekly summary like a story:
 
 Make it read like a weekly newsletter or diary entry. Fun and engaging with emojis!"""
         
-        try:
-            response = self.model.generate_content(prompt)
-            return response.text
-        except Exception as e:
-            return f"Couldn't summarize week: {str(e)}"
+        return self._generate_response(prompt)
     
     def compare_participants(self) -> str:
         """Compare communication styles of participants"""
-        
         prompt = f"""
 Compare the communication styles of these WhatsApp chat participants.
 
 Chat Statistics:
 - Participants: {', '.join(self.metadata['participants'])}
 """
-        
         for sender in self.metadata['participants']:
             sender_msgs = self.df[self.df['sender'] == sender]
             if len(sender_msgs) == 0:
@@ -289,8 +249,4 @@ Compare and contrast:
 
 Make it fun, insightful, and friendly with emojis!"""
         
-        try:
-            response = self.model.generate_content(prompt)
-            return response.text
-        except Exception as e:
-            return f"Couldn't compare participants: {str(e)}"
+        return self._generate_response(prompt)
