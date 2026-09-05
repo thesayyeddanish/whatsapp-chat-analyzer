@@ -79,51 +79,47 @@ class WhatsAppChatParser:
         return self.df
     
     def _manual_parse(self) -> pd.DataFrame:
-        """Manual parsing for unsupported WhatsApp formats"""
+        """Manual parsing for WhatsApp formats (handles your specific format)"""
         with open(self.file_path, 'r', encoding='utf-8') as f:
             lines = f.readlines()
         
         messages = []
+        
+        # Your specific format pattern:
+        # 12/04/21, 12:45 pm - RohiniTembhurnikar: message
+        # 18/04/23, 21:19 - Danish Sayyed: message
+        # Note: Uses \u202f (narrow no-break space) instead of regular space
+        
+        # Pattern that handles both regular space and narrow no-break space (\u202f)
+        pattern = r'^(\d{1,2}/\d{1,2}/\d{2},\s+\d{1,2}:\d{2}\s*(?:am|pm|AM|PM)?)[\s\u202f]-\s+(.+?):\s*(.*)$'
+        
         current_sender = None
         current_message = []
         current_date = None
         
-        # Common WhatsApp date patterns
-        date_patterns = [
-            r'^\[(\d{1,2}/\d{1,2}/\d{2,4},?\s+\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM|am|pm)?)\]\s+(.*?):\s*(.*)',  # [date] sender: message
-            r'^(\d{1,2}/\d{1,2}/\d{2,4},?\s+\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM|am|pm)?),\s+(.*?):\s*(.*)',  # date, sender: message
-            r'^(\d{1,2}-\d{1,2}-\d{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?)\s+(.*?):\s*(.*)',  # date-time sender: message
-            r'^(\d{1,2}/\d{1,2}/\d{2,4}\s+\d{1,2}:\d{2})\s+(.*?):\s*(.*)',  # date time sender: message
-            r'^(\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2})\s+(.*?):\s*(.*)',  # European format
-        ]
-        
         for line in lines:
-            line = line.strip()
-            if not line:
+            line = line.rstrip('\n\r')
+            if not line.strip():
                 continue
             
-            # Try to match date patterns
-            matched = False
-            for pattern in date_patterns:
-                match = re.match(pattern, line)
-                if match:
-                    # Save previous message
-                    if current_sender and current_message:
-                        messages.append({
-                            'date': current_date,
-                            'sender': current_sender,
-                            'message': ' '.join(current_message)
-                        })
-                    
-                    # Start new message
-                    current_date = match.group(1)
-                    current_sender = match.group(2)
-                    current_message = [match.group(3)]
-                    matched = True
-                    break
+            # Try to match the pattern
+            match = re.match(pattern, line, re.IGNORECASE)
             
-            if not matched:
-                # Continuation of previous message
+            if match:
+                # Save previous message
+                if current_sender and current_message:
+                    messages.append({
+                        'date': current_date,
+                        'sender': current_sender,
+                        'message': ' '.join(current_message)
+                    })
+                
+                # Start new message
+                current_date = match.group(1)
+                current_sender = match.group(2)
+                current_message = [match.group(3)]
+            else:
+                # Continuation of previous message (multi-line messages)
                 if current_sender:
                     current_message.append(line)
         
@@ -140,12 +136,28 @@ class WhatsAppChatParser:
         
         df = pd.DataFrame(messages)
         
-        # Try to parse dates
-        df['date'] = pd.to_datetime(df['date'], errors='coerce', dayfirst=False)
+        # Parse dates - handle both 12-hour and 24-hour formats
+        def parse_date(date_str):
+            date_str = date_str.strip()
+            # Try different formats
+            formats = [
+                '%d/%m/%y, %I:%M %p',  # 12/04/21, 12:45 PM
+                '%d/%m/%y, %I:%M%p',   # 12/04/21, 12:45PM
+                '%d/%m/%y, %H:%M',     # 18/04/23, 21:19
+                '%d/%m/%Y, %I:%M %p',  # 12/04/2021, 12:45 PM
+                '%d/%m/%Y, %H:%M',     # 18/04/2023, 21:19
+            ]
+            
+            for fmt in formats:
+                try:
+                    return pd.to_datetime(date_str, format=fmt)
+                except:
+                    continue
+            
+            # Fallback: let pandas guess
+            return pd.to_datetime(date_str, errors='coerce')
         
-        # If date parsing failed, try with dayfirst=True
-        if df['date'].isna().all():
-            df['date'] = pd.to_datetime(df['date'], errors='coerce', dayfirst=True)
+        df['date'] = df['date'].apply(parse_date)
         
         return df
     
