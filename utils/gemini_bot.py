@@ -1,16 +1,17 @@
 import pandas as pd
 import google.generativeai as genai
+import re
 from typing import Dict, Tuple
 
 class GeminiChatAnalyzer:
-    """AI-powered chat analyzer using Google Gemini across full multi-year chat logs"""
+    """AI-powered chat analyzer reading full multi-year WhatsApp logs"""
     
     def __init__(self, df: pd.DataFrame, metadata: Dict, api_key: str):
         self.df = df.copy()
         self.metadata = metadata
         self.api_key = api_key
         
-        # Ensure requisite datetime helper columns exist
+        # Ensure datetime and string types
         if 'date' in self.df.columns and not pd.api.types.is_datetime64_any_dtype(self.df['date']):
             self.df['date'] = pd.to_datetime(self.df['date'], errors='coerce')
             
@@ -23,11 +24,11 @@ class GeminiChatAnalyzer:
         if 'message_length' not in self.df.columns and 'message' in self.df.columns:
             self.df['message_length'] = self.df['message'].astype(str).str.len()
 
-        # Configure API without blocking UI initialization
+        # Configure API
         genai.configure(api_key=api_key)
 
     def _generate_response(self, prompt: str) -> str:
-        """Safe generation wrapper using Gemini's large-context models"""
+        """Safe generation wrapper using available Gemini models"""
         models_to_try = [
             'gemini-3.6-flash',
             'gemini-1.5-flash',
@@ -48,73 +49,81 @@ class GeminiChatAnalyzer:
                 
         return f"Sorry, I encountered an error across available models: {str(last_error)}"
 
-    def _build_full_chat_text(self, max_chars: int = 3_000_000) -> str:
-        """Formats the ENTIRE dataset into a single text block for Gemini's context window"""
+    def _build_chat_text_from_df(self, dataframe: pd.DataFrame, max_chars: int = 2_500_000) -> str:
+        """Formats a DataFrame into readable conversation lines for Gemini"""
         lines = []
-        for _, row in self.df.iterrows():
+        for _, row in dataframe.iterrows():
             sender = row.get('sender', 'Unknown')
             date_str = str(row.get('date', ''))
             msg = str(row.get('message', '')).replace('\n', ' ')
             lines.append(f"[{date_str}] {sender}: {msg}")
         
         full_text = "\n".join(lines)
-        
-        # Safe character truncation to protect against extreme payload limits
         if len(full_text) > max_chars:
-            return full_text[:max_chars] + "\n...[Chat log truncated due to extreme size]..."
+            return full_text[:max_chars] + "\n...[Truncated due to size limit]..."
         return full_text
-    
+
     def analyze_chat(self, question: str) -> str:
-        """Ask Gemini to analyze the complete chat log"""
-        full_chat = self._build_full_chat_text()
+        """Dynamically fetches relevant logs across all years to answer user questions"""
+        
+        # Check if user is asking about specific dates/years/keywords
+        q_lower = question.lower()
+        filtered_df = self.df
+        
+        # Check for specific year mentioned in query (e.g., 2023, 2022)
+        year_match = re.search(r'\b(20\d{2})\b', question)
+        if year_match:
+            target_year = int(year_match.group(1))
+            year_mask = self.df['date'].dt.year == target_year
+            if year_mask.any():
+                filtered_df = self.df[year_mask]
+
+        # Convert the target dataset (or full chat if no specific filter) to text
+        chat_logs = self._build_chat_text_from_df(filtered_df)
         
         prompt = f"""
-You are an expert chat analyst. Below is the COMPLETE chat log spanning the entire history of this conversation.
+You are an expert chat analyst. You are provided with the actual message logs from a WhatsApp chat archive.
 
 Chat Overview:
-- Total Messages: {self.metadata['total_messages']:,}
-- Total Words: {self.metadata['total_words']:,}
+- Total Messages in Archive: {self.metadata['total_messages']:,}
+- Total Messages in Context Below: {len(filtered_df):,}
 - Participants: {', '.join(self.metadata['participants'])}
 - Date Range: {self.metadata['date_range']['start']} to {self.metadata['date_range']['end']}
 
-Entire Chat History:
-{full_chat}
+Actual Chat Logs:
+{chat_logs}
 
 User Question: "{question}"
 
 Instructions:
-- Carefully analyze the full timeline to answer the user's question accurately.
-- Reference specific years, dates, or milestones if relevant.
+- Answer the user's question directly by reading through the provided chat logs above.
+- Do NOT claim that messages are missing if they exist in the provided chat logs.
 - Provide a clear, detailed, and friendly response with emojis!
 """
         return self._generate_response(prompt)
     
     def search_messages(self, query: str) -> Tuple[str, pd.DataFrame]:
-        """Search for messages across the entire dataset and analyze matches"""
+        """Search for messages across the full dataset"""
         mask = self.df['message'].astype(str).str.lower().str.contains(query.lower(), case=False, regex=False, na=False)
         results = self.df[mask].copy()
         
         if len(results) == 0:
             return f"🔍 No messages found containing '{query}'", pd.DataFrame()
         
-        matching_lines = []
-        for _, msg in results.iterrows():
-            matching_lines.append(f"[{msg.get('date', '')}] {msg.get('sender', '')}: {str(msg.get('message', ''))}")
-        
-        matches_text = "\n".join(matching_lines[:500]) # Pass up to 500 matching results directly
+        matches_text = self._build_chat_text_from_df(results.head(500))
         
         prompt = f"""
 The user searched for: "{query}"
 
 Found {len(results)} matching messages across the full chat history.
 
-Matching Messages Log:
+Matching Message Logs:
 {matches_text}
 
 Based on all matching messages across the full timeline, provide:
 1. A summary of what these discussions were about over time
 2. Who mentioned this topic most frequently
-3. How discussions on this topic evolved from early dates to recent dates
+3. How discussions on this topic evolved over time
 
 Make it conversational and clear with emojis!"""
         
@@ -123,38 +132,35 @@ Make it conversational and clear with emojis!"""
         return full_response, results.head(20)
     
     def get_insights(self) -> str:
-        """Get AI-generated insights across all 4 years of conversation history"""
-        full_chat = self._build_full_chat_text()
+        """Get AI-generated insights across the full conversation history"""
+        chat_logs = self._build_chat_text_from_df(self.df)
 
         prompt = f"""
-You are a relationship and communication expert. You are reviewing the ENTIRE 4-year WhatsApp chat archive provided below.
+You are a relationship and communication expert. You are reviewing the full WhatsApp chat archive provided below.
 
-Complete Chat Log:
-{full_chat}
+Complete Chat Logs:
+{chat_logs}
 
-Provide a comprehensive 4-year synthesis report including:
-1. **Evolution Over Time** - How did communication change from Year 1 to Year 4?
-2. **Relationship Dynamics & Growth** - What does the full timeline reveal about their bond and changing closeness?
-3. **Key Themes & Eras** - What were the distinct phases or main topics during different periods?
-4. **Communication Style & Tone** - How do participants express affection, humor, or conflict over time?
-5. **Memorable Patterns & Quirks** - Unique habits or recurring jokes noticed across the entire archive.
+Provide a comprehensive synthesis report including:
+1. **Evolution Over Time** - How did communication change across the years?
+2. **Relationship Dynamics & Growth** - What does the timeline reveal about their bond?
+3. **Key Themes & Eras** - Main topics discussed during different periods.
+4. **Communication Style & Tone** - How participants express affection, humor, or conflict.
+5. **Memorable Patterns & Quirks** - Unique habits or recurring jokes across the archive.
 
 Make it engaging, empathetic, and organized with clear section headers and emojis."""
         
         return self._generate_response(prompt)
     
     def summarize_week(self, week_start: str, week_end: str) -> str:
-        """Summarize a specific week of the chat using all messages from that window"""
+        """Summarize a specific week using exact messages from that date window"""
         week_mask = (self.df['date'] >= week_start) & (self.df['date'] <= week_end)
         week_messages = self.df[week_mask]
         
         if len(week_messages) == 0:
-            return "No messages found for that specified timeframe."
+            return f"No messages found for the period {week_start} to {week_end}."
         
-        week_text = "\n".join(
-            f"[{msg.get('date', '')}] {msg.get('sender', '')}: {msg.get('message', '')}"
-            for _, msg in week_messages.iterrows()
-        )
+        week_text = self._build_chat_text_from_df(week_messages)
 
         prompt = f"""
 Summarize this specific week of chat ({week_start} to {week_end}).
@@ -174,23 +180,23 @@ Make it read like a clear journal entry with emojis!"""
         return self._generate_response(prompt)
     
     def compare_participants(self) -> str:
-        """Compare communication styles using metrics and full chat context"""
-        full_chat = self._build_full_chat_text(max_chars=1_500_000)
+        """Compare communication styles using full chat logs"""
+        chat_logs = self._build_chat_text_from_df(self.df, max_chars=1_500_000)
         
         prompt = f"""
-Compare the communication styles of these WhatsApp chat participants using their FULL history.
+Compare the communication styles of these WhatsApp chat participants using their full chat history.
 
 Participants: {', '.join(self.metadata['participants'])}
 Total Messages: {self.metadata['total_messages']:}
 
-Chat History Context:
-{full_chat}
+Chat Logs Context:
+{chat_logs}
 
 Compare and contrast:
 1. **Verbosity & Tone** - Who sends longer messages? Who initiates conversations more often?
 2. **Emotional Expressiveness** - How does each participant share feelings or humor over time?
 3. **Topic Preferences** - What distinct subjects does each person bring up most frequently?
-4. **Personality Summary** - What does 4 years of data reveal about each person's chat personality?
+4. **Personality Summary** - What does the data reveal about each person's chat personality?
 
 Make it insightful, balanced, and fun with emojis!"""
         
