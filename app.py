@@ -11,6 +11,7 @@ from analyzers.activity_analyzer import ActivityAnalyzer
 from analyzers.participant_analyzer import ParticipantAnalyzer
 from sentiment.sentiment_analyzer import SentimentAnalyzer
 from visualizers.dashboard import ChatVisualizer
+from utils.chatbot import ChatAnalyzerBot
 
 st.set_page_config(
     page_title="WhatsApp Chat Analyzer",
@@ -38,6 +39,19 @@ st.markdown("""
     }
     .stAlert {
         border-radius: 10px;
+    }
+    .chat-message {
+        padding: 15px;
+        border-radius: 10px;
+        margin: 10px 0;
+    }
+    .user-message {
+        background: #e3f2fd;
+        border-left: 4px solid #2196f3;
+    }
+    .bot-message {
+        background: #f5f5f5;
+        border-left: 4px solid #4caf50;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -67,12 +81,15 @@ if uploaded_file is not None:
         
         st.success(f"✅ Loaded **{metadata['total_messages']:,}** messages from **{len(metadata['participants'])}** participants")
         
+        # Initialize chatbot
+        chatbot = ChatAnalyzerBot(df, metadata)
+        
         # Sidebar navigation
         st.sidebar.title("🧭 Navigation")
         section = st.sidebar.radio(
             "Select Section",
             ["📊 Overview", "⏰ Activity & Timing", "👥 Participants", 
-             "😊 Sentiment", "🏷️ Topics", "📖 Story", "📥 Export"],
+             "😊 Sentiment", "🏷️ Topics", "📖 Story", "📥 Export", "🤖 Chatbot"],
             index=0
         )
         
@@ -357,9 +374,132 @@ if uploaded_file is not None:
             - 🏷️ **Topics** - What do you talk about most?
             - 📖 **Story** - Visual timeline of your conversation
             - 📥 **Export** - Download beautiful infographics to share!
+            - 🤖 **Chatbot** - Ask questions about your chat!
             
             **Happy exploring! 🎉**
             """)
+        
+        # ========== CHATBOT ==========
+        elif section == "🤖 Chatbot":
+            st.header("🤖 Chat Analyzer Bot")
+            
+            st.markdown("""
+            ### 💬 Ask Me Anything About Your Chat!
+            
+            I'm your personal chat assistant. Ask me questions and I'll analyze your conversation!
+            """)
+            
+            # Initialize chat history
+            if "chat_history" not in st.session_state:
+                st.session_state.chat_history = []
+            
+            # Display chat history
+            for message in st.session_state.chat_history:
+                if message["role"] == "user":
+                    st.markdown(f"""
+                    <div class="chat-message user-message">
+                        <div style="font-weight: bold; color: #1976d2; margin-bottom: 5px;">👤 You</div>
+                        <div>{message["content"]}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.markdown(f"""
+                    <div class="chat-message bot-message">
+                        <div style="font-weight: bold; color: #388e3c; margin-bottom: 5px;">🤖 Bot</div>
+                        <div>{message["content"]}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+            
+            # Chat input
+            st.markdown("---")
+            
+            # Quick question buttons
+            st.markdown("#### ⚡ Quick Questions:")
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                if st.button("📊 Who talks more?", key="q1"):
+                    st.session_state.chat_history.append({"role": "user", "content": "Who talks more?"})
+                    answer = chatbot.answer_question("Who talks more?")
+                    st.session_state.chat_history.append({"role": "assistant", "content": answer})
+                    st.rerun()
+            
+            with col2:
+                if st.button("🕐 Peak hour?", key="q2"):
+                    st.session_state.chat_history.append({"role": "user", "content": "What's our peak hour?"})
+                    answer = chatbot.answer_question("What's our peak hour?")
+                    st.session_state.chat_history.append({"role": "assistant", "content": answer})
+                    st.rerun()
+            
+            with col3:
+                if st.button("😊 Positive messages?", key="q3"):
+                    st.session_state.chat_history.append({"role": "user", "content": "Show positive messages"})
+                    answer = chatbot.answer_question("Show positive messages")
+                    st.session_state.chat_history.append({"role": "assistant", "content": answer})
+                    st.rerun()
+            
+            # Text input
+            user_input = st.text_input(
+                "Type your question here:",
+                placeholder="e.g., 'How many messages do we send per day?' or 'Who initiates more?'",
+                key="chat_input"
+            )
+            
+            if user_input:
+                # Add user message to history
+                st.session_state.chat_history.append({"role": "user", "content": user_input})
+                
+                # Get bot response
+                with st.spinner("🤔 Thinking..."):
+                    answer = chatbot.answer_question(user_input)
+                
+                # Add bot response to history
+                st.session_state.chat_history.append({"role": "assistant", "content": answer})
+                
+                # Rerun to show new message
+                st.rerun()
+            
+            # Clear chat button
+            st.markdown("---")
+            if st.button("🗑️ Clear Chat History"):
+                st.session_state.chat_history = []
+                st.rerun()
+            
+            # Help section
+            with st.expander("❓ What can I ask?"):
+                st.markdown("""
+                **Try these questions:**
+                
+                **📊 General Stats:**
+                - How many total messages?
+                - What's our average per day?
+                - Who talks more?
+                - When's our peak hour?
+                - What's our most active day?
+                
+                **😊 Sentiment:**
+                - Show me positive messages
+                - How many negative messages?
+                - Is our chat positive?
+                
+                **🔑 Words & Emojis:**
+                - What words does [name] use most?
+                - What are our top words?
+                - How many emojis do we use?
+                
+                **📱 Messages:**
+                - What was the first message?
+                - What's the longest message?
+                - Show me the last message
+                
+                **🚀 Behavior:**
+                - Who starts conversations more?
+                - What's our response time?
+                - Who shares more links?
+                
+                Just type naturally and I'll do my best to answer! 😊
+                """)
         
         # ========== ACTIVITY & TIMING ==========
         elif section == "⏰ Activity & Timing":
@@ -1101,6 +1241,7 @@ else:
     - **Sentiment Analysis** - VADER scoring, mood tracking
     - **Word Clouds** - Most used words and emojis
     - **Export Options** - CSV, JSON, PNG infographics
+    - **🤖 Chatbot** - Ask questions about your chat!
     
     ### 💡 Tips
     
