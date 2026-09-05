@@ -4,14 +4,14 @@ import re
 from typing import Dict, Tuple
 
 class GeminiChatAnalyzer:
-    """AI-powered chat analyzer reading full multi-year WhatsApp logs"""
+    """AI-powered chat analyzer reading full multi-year WhatsApp logs using Google Gemini"""
     
     def __init__(self, df: pd.DataFrame, metadata: Dict, api_key: str):
         self.df = df.copy()
         self.metadata = metadata
         self.api_key = api_key
         
-        # Ensure datetime and string types
+        # Safe column and type initialization
         if 'date' in self.df.columns and not pd.api.types.is_datetime64_any_dtype(self.df['date']):
             self.df['date'] = pd.to_datetime(self.df['date'], errors='coerce')
             
@@ -24,16 +24,15 @@ class GeminiChatAnalyzer:
         if 'message_length' not in self.df.columns and 'message' in self.df.columns:
             self.df['message_length'] = self.df['message'].astype(str).str.len()
 
-        # Configure API
+        # Configure API without running heavy blocking network calls during init
         genai.configure(api_key=api_key)
 
     def _generate_response(self, prompt: str) -> str:
-        """Safe generation wrapper using available Gemini models"""
+        """Safe generation wrapper using active, supported Gemini endpoints"""
         models_to_try = [
-            'gemini-3.6-flash',
             'gemini-1.5-flash',
             'gemini-1.5-pro',
-            'gemini-pro'
+            'gemini-2.0-flash'
         ]
         
         last_error = None
@@ -50,7 +49,7 @@ class GeminiChatAnalyzer:
         return f"Sorry, I encountered an error across available models: {str(last_error)}"
 
     def _build_chat_text_from_df(self, dataframe: pd.DataFrame, max_chars: int = 2_500_000) -> str:
-        """Formats a DataFrame into readable conversation lines for Gemini"""
+        """Formats DataFrame rows into a clean string for Gemini's large context window"""
         lines = []
         for _, row in dataframe.iterrows():
             sender = row.get('sender', 'Unknown')
@@ -64,13 +63,10 @@ class GeminiChatAnalyzer:
         return full_text
 
     def analyze_chat(self, question: str) -> str:
-        """Dynamically fetches relevant logs across all years to answer user questions"""
-        
-        # Check if user is asking about specific dates/years/keywords
-        q_lower = question.lower()
+        """Dynamically fetches relevant logs across all years to answer user queries"""
         filtered_df = self.df
         
-        # Check for specific year mentioned in query (e.g., 2023, 2022)
+        # Check if user query references a specific year (e.g., 2023, 2022)
         year_match = re.search(r'\b(20\d{2})\b', question)
         if year_match:
             target_year = int(year_match.group(1))
@@ -78,11 +74,10 @@ class GeminiChatAnalyzer:
             if year_mask.any():
                 filtered_df = self.df[year_mask]
 
-        # Convert the target dataset (or full chat if no specific filter) to text
         chat_logs = self._build_chat_text_from_df(filtered_df)
         
         prompt = f"""
-You are an expert chat analyst. You are provided with the actual message logs from a WhatsApp chat archive.
+You are an expert chat analyst. Below are actual message logs from a WhatsApp chat archive.
 
 Chat Overview:
 - Total Messages in Archive: {self.metadata['total_messages']:,}
@@ -97,13 +92,13 @@ User Question: "{question}"
 
 Instructions:
 - Answer the user's question directly by reading through the provided chat logs above.
-- Do NOT claim that messages are missing if they exist in the provided chat logs.
+- Reference specific timestamps, events, or dates where applicable.
 - Provide a clear, detailed, and friendly response with emojis!
 """
         return self._generate_response(prompt)
     
     def search_messages(self, query: str) -> Tuple[str, pd.DataFrame]:
-        """Search for messages across the full dataset"""
+        """Search for messages across the full dataset and provide AI analysis"""
         mask = self.df['message'].astype(str).str.lower().str.contains(query.lower(), case=False, regex=False, na=False)
         results = self.df[mask].copy()
         
@@ -115,7 +110,7 @@ Instructions:
         prompt = f"""
 The user searched for: "{query}"
 
-Found {len(results)} matching messages across the full chat history.
+Found {len(results)} matching messages across the chat history.
 
 Matching Message Logs:
 {matches_text}
