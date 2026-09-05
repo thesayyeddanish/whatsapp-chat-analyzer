@@ -11,72 +11,134 @@ class ChatAnalyzerBot:
         self.metadata = metadata
         self.participants = metadata['participants']
         
-    def answer_question(self, question: str) -> str:
-        """Process user question and return answer"""
+    def answer_question(self, question: str) -> Tuple[str, pd.DataFrame]:
+        """Process user question and return answer + optional results dataframe"""
         question_lower = question.lower().strip()
         
         # Remove punctuation
         question_clean = re.sub(r'[^\w\s]', ' ', question_lower)
         
+        # Check if it's a search query (looking for specific words/messages)
+        if any(word in question_clean for word in ['search', 'find', 'show message', 'message with', 'containing', 'where']):
+            # Extract search terms
+            search_terms = self._extract_search_terms(question)
+            if search_terms:
+                return self._search_messages(search_terms)
+        
         # Route to appropriate handler
         if any(word in question_clean for word in ['who talk', 'who send', 'who message', 'more message', 'most message']):
-            return self._who_talks_more()
+            return self._who_talks_more(), None
         
         elif any(word in question_clean for word in ['active hour', 'peak hour', 'busy hour', 'what time']):
-            return self._peak_hour()
+            return self._peak_hour(), None
         
         elif any(word in question_clean for word in ['active day', 'peak day', 'busy day', 'what day']):
-            return self._peak_day()
+            return self._peak_day(), None
         
         elif any(word in question_clean for word in ['total message', 'how many message', 'message count']):
-            return self._total_messages()
+            return self._total_messages(), None
         
         elif any(word in question_clean for word in ['positive', 'happy', 'good mood']):
-            return self._positive_messages()
+            return self._positive_messages(), None
         
         elif any(word in question_clean for word in ['negative', 'sad', 'bad mood', 'angry']):
-            return self._negative_messages()
+            return self._negative_messages(), None
         
         elif any(word in question_clean for word in ['word', 'vocabulary', 'common word', 'frequent word']):
             # Check if asking about specific person
             for participant in self.participants:
                 if participant.lower() in question_clean:
-                    return self._top_words(participant)
-            return self._top_words(None)
+                    return self._top_words(participant), None
+            return self._top_words(None), None
         
         elif any(word in question_clean for word in ['emoji', 'emoticon']):
-            return self._emoji_usage()
+            return self._emoji_usage(), None
         
         elif any(word in question_clean for word in ['link', 'url', 'website']):
-            return self._link_sharing()
+            return self._link_sharing(), None
         
         elif any(word in question_clean for word in ['first message', 'oldest message', 'earliest message']):
-            return self._first_message()
+            return self._first_message(), None
         
         elif any(word in question_clean for word in ['last message', 'recent message', 'newest message']):
-            return self._last_message()
+            return self._last_message(), None
         
         elif any(word in question_clean for word in ['average', 'avg', 'mean']):
             if 'message' in question_clean or 'per day' in question_clean:
-                return self._average_messages_per_day()
+                return self._average_messages_per_day(), None
         
         elif any(word in question_clean for word in ['longest message', 'biggest message', 'largest message']):
-            return self._longest_message()
+            return self._longest_message(), None
         
         elif any(word in question_clean for word in ['shortest message', 'smallest message', 'smallest message']):
-            return self._shortest_message()
+            return self._shortest_message(), None
         
         elif any(word in question_clean for word in ['who start', 'who initi', 'first to message']):
-            return self._who_initiates()
+            return self._who_initiates(), None
         
         elif any(word in question_clean for word in ['response time', 'reply time', 'how fast']):
-            return self._response_time()
+            return self._response_time(), None
         
         elif any(word in question_clean for word in ['help', 'what can', 'what question', 'example']):
-            return self._help()
+            return self._help(), None
         
         else:
-            return self._default_response()
+            return self._default_response(), None
+    
+    def _extract_search_terms(self, question: str) -> List[str]:
+        """Extract search terms from question"""
+        # Common search patterns
+        patterns = [
+            r'search for (.+)',
+            r'find (.+)',
+            r'show message(.+)',
+            r'message with (.+)',
+            r'containing (.+)',
+            r'where (.+)',
+        ]
+        
+        question_lower = question.lower()
+        
+        for pattern in patterns:
+            match = re.search(pattern, question_lower)
+            if match:
+                search_text = match.group(1).strip()
+                # Remove common words
+                stop_words = ['the', 'a', 'an', 'is', 'are', 'was', 'were', 'in', 'on', 'at', 'to', 'for']
+                terms = [word for word in search_text.split() if word not in stop_words and len(word) > 1]
+                return terms
+        
+        return []
+    
+    def _search_messages(self, search_terms: List[str]) -> Tuple[str, pd.DataFrame]:
+        """Search for messages containing specific terms"""
+        search_query = ' '.join(search_terms)
+        
+        # Search in messages
+        mask = self.df['message'].str.lower().str.contains('|'.join(search_terms), case=False, regex=True, na=False)
+        results = self.df[mask].copy()
+        
+        if len(results) == 0:
+            return f"🔍 No messages found containing '{search_query}'", pd.DataFrame()
+        
+        # Sort by date (newest first)
+        results = results.sort_values('date', ascending=False)
+        
+        response = f"🔍 Found **{len(results):,} messages** containing '{search_query}'\n\n"
+        
+        if len(results) > 0:
+            # Show breakdown by sender
+            by_sender = results.groupby('sender').size().sort_values(ascending=False)
+            response += "**By participant:**\n"
+            for sender, count in by_sender.items():
+                response += f"- **{sender}**: {count:,} messages\n"
+            response += "\n"
+            
+            # Date range
+            response += f"**Date range:** {results['date'].min()} to {results['date'].max()}\n\n"
+            response += f"**Showing:** Most recent {min(10, len(results))} of {len(results):,} results\n\n"
+        
+        return response, results.head(10)
     
     def _who_talks_more(self) -> str:
         """Answer: Who talks more?"""
@@ -486,6 +548,12 @@ class ChatAnalyzerBot:
         response = "🤖 **I can help you analyze your chat! Try asking:**\n\n"
         
         questions = [
+            ("🔍 Search Messages", [
+                "Search for 'good morning'",
+                "Find messages with 'love'",
+                "Show message containing 'meeting'",
+                "Where did we talk about 'trip'?"
+            ]),
             ("📊 General Stats", [
                 "How many total messages?",
                 "What's our average per day?",
@@ -530,6 +598,7 @@ class ChatAnalyzerBot:
         return """🤔 Hmm, I'm not sure I understand that question!
 
 Try asking about:
+- **Search**: "Search for 'good morning'", "Find messages with 'love'"
 - **Stats**: "How many messages?", "Who talks more?"
 - **Timing**: "What's our peak hour?", "Most active day?"
 - **Sentiment**: "Show positive messages", "How many negative?"
